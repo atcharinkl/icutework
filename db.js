@@ -115,11 +115,13 @@ async function initDB() {
     )
   `)
 
-  // ข้อมูลตัวอย่าง
+  // ข้อมูลตัวอย่าง — แยกเป็นทีละ query เพื่อความเข้ากันได้กับ PostgreSQL
   const { rows } = await pool.query('SELECT id FROM shift_schedules LIMIT 1')
   if (rows.length === 0) {
     await pool.query(`INSERT INTO shift_schedules (name, start_time, end_time, late_minutes) VALUES ('กะปกติ','08:30:00','17:30:00',15)`)
-    await pool.query(`INSERT INTO departments (name) VALUES ('IT'),('HR'),('การตลาด')`)
+    await pool.query(`INSERT INTO departments (name) VALUES ('IT')`)
+    await pool.query(`INSERT INTO departments (name) VALUES ('HR')`)
+    await pool.query(`INSERT INTO departments (name) VALUES ('การตลาด')`)
   }
   console.log('✅ Database พร้อมใช้งาน')
 }
