@@ -1,4 +1,4 @@
-// server.js — ระบบเช็คอินผ่าน LINE (โค้ดเต็ม)
+// server.js — ระบบเช็คอินผ่าน LINE (PostgreSQL version)
 require('dotenv').config()
 const express = require('express')
 const { Client, middleware } = require('@line/bot-sdk')
@@ -13,7 +13,7 @@ const app = express()
 
 // ── Webhook endpoint ──────────────────────────────────────────
 app.post('/webhook', middleware(lineConfig), async (req, res) => {
-  res.sendStatus(200) // ตอบ 200 ก่อนเสมอ
+  res.sendStatus(200)
   for (const event of req.body.events) {
     try {
       if (event.type === 'message') {
@@ -32,7 +32,6 @@ async function handleText(event) {
   const text   = event.message.text.trim()
   const emp    = await db.findByLineId(userId)
 
-  // พนักงานยังไม่ได้ลงทะเบียน
   if (!emp) {
     return client.replyMessage(event.replyToken, {
       type: 'text',
@@ -44,9 +43,6 @@ async function handleText(event) {
   if (cmd === 'เช็คอิน' || cmd === 'checkin')   return checkIn(event.replyToken, emp)
   if (cmd === 'เช็คเอาท์' || cmd === 'checkout') return checkOut(event.replyToken, emp)
   if (cmd === 'สถานะ' || cmd === 'status')        return sendStatus(event.replyToken, emp)
-  if (cmd === 'ช่วยเหลือ' || cmd === 'help')      return sendHelp(event.replyToken, emp)
-
-  // ไม่รู้จำคำสั่ง → แสดงเมนู
   return sendHelp(event.replyToken, emp)
 }
 
@@ -57,9 +53,7 @@ async function handleLocation(event) {
   if (!emp) return
 
   const { latitude: lat, longitude: lng } = event.message
-
-  // ตรวจสอบรัศมี 500 เมตรจากออฟฟิศ
-  const OFFICE_LAT = 18.7883  // ← เปลี่ยนเป็นพิกัดออฟฟิศจริง
+  const OFFICE_LAT = 18.7883
   const OFFICE_LNG = 98.9853
   const dist = getDistance(lat, lng, OFFICE_LAT, OFFICE_LNG)
 
@@ -69,7 +63,6 @@ async function handleLocation(event) {
       text: `⚠️ คุณอยู่ห่างจากออฟฟิศ ${Math.round(dist)} เมตร\nกรุณาเช็คอินในพื้นที่ทำงานครับ`
     })
   }
-
   return checkIn(event.replyToken, emp, lat, lng)
 }
 
@@ -85,8 +78,8 @@ async function checkIn(replyToken, emp, lat, lng) {
   }
 
   const now   = new Date()
-  const shift = parseTime(emp.start_time) // เวลาเริ่มกะ
-  const late  = (now - shift) / 60000     // นาทีที่สาย
+  const shift = parseTime(emp.start_time)
+  const late  = (now - shift) / 60000
   const type  = late > emp.late_minutes ? 'late' : 'on_time'
 
   await db.createCheckIn({ employee_id: emp.id, checkin_time: now, checkin_type: type, lat, lng })
@@ -99,7 +92,6 @@ async function checkIn(replyToken, emp, lat, lng) {
     const lateMin = Math.round(late)
     msg = `⚠️ เช็คอินสำเร็จ\n👤 ${emp.name}\n🕐 ${timeStr} น.\n⏰ มาสาย ${lateMin} นาที\n\nกรุณาแจ้งเหตุผลกับ HR ด้วยนะครับ`
 
-    // แจ้ง HR / หัวหน้าแผนก
     const dept = await db.getDepartment(emp.department_id)
     if (dept?.manager_line_id) {
       await client.pushMessage(dept.manager_line_id, {
@@ -108,7 +100,6 @@ async function checkIn(replyToken, emp, lat, lng) {
       })
     }
   }
-
   return client.replyMessage(replyToken, { type: 'text', text: msg })
 }
 
@@ -129,9 +120,8 @@ async function checkOut(replyToken, emp) {
 
   const now = new Date()
   await db.updateCheckOut(emp.id, now)
-
-  const inTime  = new Date(record.checkin_time)
-  const hours   = ((now - inTime) / 3600000).toFixed(1)
+  const inTime = new Date(record.checkin_time)
+  const hours  = ((now - inTime) / 3600000).toFixed(1)
 
   return client.replyMessage(replyToken, {
     type: 'text',
@@ -168,7 +158,7 @@ async function sendHelp(replyToken, emp) {
 // ── Admin API endpoints ──────────────────────────────────────
 app.use('/admin', express.json())
 
-// ดูสรุปวันนี้ (ใช้กับ Dashboard)
+// ดูสรุปวันนี้
 app.get('/admin/today', async (req, res) => {
   const data = await db.getTodaySummary()
   res.json(data)
@@ -176,12 +166,17 @@ app.get('/admin/today', async (req, res) => {
 
 // เพิ่มพนักงาน
 app.post('/admin/employees', async (req, res) => {
-  const { name, employee_code, line_user_id, department_id, shift_id } = req.body
-  const [result] = await db.pool.query(
-    'INSERT INTO employees (name, employee_code, line_user_id, department_id, shift_id) VALUES (?,?,?,?,?)',
-    [name, employee_code, line_user_id, department_id, shift_id || 1]
-  )
-  res.json({ id: result.insertId, message: 'เพิ่มพนักงานสำเร็จ' })
+  try {
+    const { name, employee_code, line_user_id, department_id, shift_id } = req.body
+    const result = await db.pool.query(
+      'INSERT INTO employees (name, employee_code, line_user_id, department_id, shift_id) VALUES ($1,$2,$3,$4,$5) RETURNING id',
+      [name, employee_code, line_user_id, department_id, shift_id || 1]
+    )
+    res.json({ id: result.rows[0].id, message: 'เพิ่มพนักงานสำเร็จ' })
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: err.message })
+  }
 })
 
 // ── Helper functions ─────────────────────────────────────────
