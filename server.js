@@ -1,4 +1,4 @@
-// server.js — ระบบเช็คอินผ่าน LINE (PostgreSQL version)
+// server.js — ระบบเช็คอินผ่าน LINE (PostgreSQL + CORS)
 require('dotenv').config()
 const express = require('express')
 const { Client, middleware } = require('@line/bot-sdk')
@@ -10,6 +10,15 @@ const lineConfig = {
 }
 const client = new Client(lineConfig)
 const app = express()
+
+// ── CORS — อนุญาตทุก origin สำหรับ Admin Dashboard ───────────
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*')
+  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS')
+  res.header('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+  if (req.method === 'OPTIONS') return res.sendStatus(200)
+  next()
+})
 
 // ── Webhook endpoint ──────────────────────────────────────────
 app.post('/webhook', middleware(lineConfig), async (req, res) => {
@@ -160,8 +169,13 @@ app.use('/admin', express.json())
 
 // ดูสรุปวันนี้
 app.get('/admin/today', async (req, res) => {
-  const data = await db.getTodaySummary()
-  res.json(data)
+  try {
+    const data = await db.getTodaySummary()
+    res.json(data)
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ error: err.message })
+  }
 })
 
 // เพิ่มพนักงาน
